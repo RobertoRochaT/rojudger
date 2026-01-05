@@ -1,0 +1,104 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.bin
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# Build output
+/bin/
+/build/
+dist/
+*.o
+*.a
+
+# Go build cache
+/.cache/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+log/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Docker volumes (local development)
+postgres_data/
+redis_data/
+
+# Application specific
+rojudger-api
+rojudger-worker
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Debug files
+debug
+__debug_bin
+
+# Air (live reload)
+tmp/
+.air.toml
+
+# Backup files
+*.bak
+*.backup
+
+# OS generated files
+Thumbs.db
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor backup files
+*~
+.*.swp
+.*.swo
+
+# Python (for scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# Node (if we add JS tooling later)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

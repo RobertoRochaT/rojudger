@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: rojudger-postgres
+    environment:
+      POSTGRES_USER: rojudger
+      POSTGRES_PASSWORD: rojudger_password
+      POSTGRES_DB: rojudger_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rojudger"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rojudger-network
+
+  # Redis (para cola de trabajos en el futuro)
+  redis:
+    image: redis:7-alpine
+    container_name: rojudger-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rojudger-network
+
+  # API Server
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rojudger-api
+    environment:
+      # Server
+      SERVER_PORT: 8080
+      SERVER_HOST: 0.0.0.0
+      ENVIRONMENT: development
+
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: rojudger
+      DB_PASSWORD: rojudger_password
+      DB_NAME: rojudger_db
+      DB_SSLMODE: disable
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: 0
+
+      # Executor
+      EXECUTOR_TIMEOUT: 10s
+      EXECUTOR_MEMORY_LIMIT: 256m
+      EXECUTOR_CPU_LIMIT: 0.5
+      EXECUTOR_MAX_CONCURRENT: 5
+
+      # Docker (usando Docker-in-Docker)
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_API_VERSION: 1.42
+    ports:
+      - "8080:8080"
+    volumes:
+      # Montar Docker socket para crear contenedores
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Código fuente (para desarrollo)
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - rojudger-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  rojudger-network:
+    driver: bridge
