@@ -200,11 +200,12 @@ func (db *DB) GetSubmission(id string) (*models.Submission, error) {
 	`
 	var sub models.Submission
 	var finishedAt sql.NullTime
+	var stdout, stderr, compileOut, message sql.NullString
 
 	err := db.conn.QueryRow(query, id).Scan(
 		&sub.ID, &sub.LanguageID, &sub.SourceCode, &sub.Stdin, &sub.ExpectedOut,
-		&sub.Status, &sub.Stdout, &sub.Stderr, &sub.ExitCode, &sub.Time,
-		&sub.Memory, &sub.CompileOut, &sub.Message, &sub.CreatedAt, &finishedAt,
+		&sub.Status, &stdout, &stderr, &sub.ExitCode, &sub.Time,
+		&sub.Memory, &compileOut, &message, &sub.CreatedAt, &finishedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -214,6 +215,19 @@ func (db *DB) GetSubmission(id string) (*models.Submission, error) {
 		return nil, fmt.Errorf("failed to get submission: %w", err)
 	}
 
+	// Handle nullable fields
+	if stdout.Valid {
+		sub.Stdout = stdout.String
+	}
+	if stderr.Valid {
+		sub.Stderr = stderr.String
+	}
+	if compileOut.Valid {
+		sub.CompileOut = compileOut.String
+	}
+	if message.Valid {
+		sub.Message = message.String
+	}
 	if finishedAt.Valid {
 		sub.FinishedAt = &finishedAt.Time
 	}
@@ -330,16 +344,30 @@ func (db *DB) GetSubmissionsByStatus(status string, limit int) ([]models.Submiss
 	for rows.Next() {
 		var sub models.Submission
 		var finishedAt sql.NullTime
+		var stdout, stderr, compileOut, message sql.NullString
 
 		err := rows.Scan(
 			&sub.ID, &sub.LanguageID, &sub.SourceCode, &sub.Stdin, &sub.ExpectedOut,
-			&sub.Status, &sub.Stdout, &sub.Stderr, &sub.ExitCode, &sub.Time,
-			&sub.Memory, &sub.CompileOut, &sub.Message, &sub.CreatedAt, &finishedAt,
+			&sub.Status, &stdout, &stderr, &sub.ExitCode, &sub.Time,
+			&sub.Memory, &compileOut, &message, &sub.CreatedAt, &finishedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan submission: %w", err)
 		}
 
+		// Handle nullable fields
+		if stdout.Valid {
+			sub.Stdout = stdout.String
+		}
+		if stderr.Valid {
+			sub.Stderr = stderr.String
+		}
+		if compileOut.Valid {
+			sub.CompileOut = compileOut.String
+		}
+		if message.Valid {
+			sub.Message = message.String
+		}
 		if finishedAt.Valid {
 			sub.FinishedAt = &finishedAt.Time
 		}

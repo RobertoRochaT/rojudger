@@ -91,6 +91,10 @@ docker-clean: ## Limpiar contenedores, imágenes y volúmenes
 	docker system prune -f
 	@echo "✅ Cleanup complete"
 
+docker-pull: ## Descargar todas las imágenes Docker necesarias
+	@echo "🐳 Pulling required Docker images..."
+	@bash scripts/pull_images.sh
+
 # Database
 db-shell: ## Conectar a PostgreSQL shell
 	@echo "🗄️  Connecting to database..."

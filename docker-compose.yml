@@ -1,7 +1,4 @@
-version: '3.8'
-
 services:
-  # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
     container_name: rojudger-postgres
@@ -20,8 +17,8 @@ services:
       retries: 5
     networks:
       - rojudger-network
+    restart: unless-stopped
 
-  # Redis (para cola de trabajos en el futuro)
   redis:
     image: redis:7-alpine
     container_name: rojudger-redis
@@ -36,8 +33,26 @@ services:
       retries: 5
     networks:
       - rojudger-network
+    restart: unless-stopped
 
-  # API Server
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: rojudger-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@rojudger.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - rojudger-network
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -69,15 +84,13 @@ services:
       EXECUTOR_CPU_LIMIT: 0.5
       EXECUTOR_MAX_CONCURRENT: 5
 
-      # Docker (usando Docker-in-Docker)
+      # Docker
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_API_VERSION: 1.42
     ports:
       - "8080:8080"
     volumes:
-      # Montar Docker socket para crear contenedores
       - /var/run/docker.sock:/var/run/docker.sock
-      # Código fuente (para desarrollo)
       - .:/app
     depends_on:
       postgres:
@@ -92,6 +105,8 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  pgadmin_data:
     driver: local
 
 networks:

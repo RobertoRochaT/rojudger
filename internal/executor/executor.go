@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -71,20 +72,12 @@ func (e *Executor) Execute(ctx context.Context, submission *models.Submission, l
 
 	startTime := time.Now()
 
-	// Si el lenguaje requiere compilación, compilar primero
+	// Para lenguajes compilados, compilar y ejecutar en el mismo contenedor
 	if language.IsCompiled {
-		compileResult := e.compile(execCtx, submission, language)
-		result.CompileOut = compileResult.Stdout + compileResult.Stderr
-
-		if compileResult.ExitCode != 0 {
-			result.Stderr = compileResult.Stderr
-			result.ExitCode = compileResult.ExitCode
-			result.Error = "Compilation failed"
-			return result
-		}
+		return e.compileAndExecute(execCtx, submission, language, startTime)
 	}
 
-	// Ejecutar el código
+	// Ejecutar el código (lenguajes interpretados)
 	containerID, err := e.createContainer(execCtx, submission, language)
 	if err != nil {
 		result.Error = fmt.Sprintf("Failed to create container: %v", err)
@@ -201,8 +194,9 @@ func (e *Executor) buildExecuteCommand(submission *models.Submission, language *
 	// Para lenguajes interpretados, crear archivo y ejecutar
 	filename := "main" + language.Extension
 
-	// Comando para crear el archivo con el código fuente
-	createFile := fmt.Sprintf("echo %q > /workspace/%s", submission.SourceCode, filename)
+	// Usar base64 para evitar problemas de escape
+	encoded := encodeBase64(submission.SourceCode)
+	createFile := fmt.Sprintf("echo '%s' | base64 -d > /workspace/%s", encoded, filename)
 
 	// Comando de ejecución
 	executeCmd := strings.ReplaceAll(language.ExecuteCmd, "{file}", filename)
@@ -315,46 +309,75 @@ func (e *Executor) getStats(ctx context.Context, containerID string) (ContainerS
 	return stats, nil
 }
 
-// compile compila el código (para lenguajes compilados como C, C++, Go)
-func (e *Executor) compile(ctx context.Context, submission *models.Submission, language *models.Language) models.ExecutionResult {
+// compileAndExecute compila y ejecuta el código en el mismo contenedor
+func (e *Executor) compileAndExecute(ctx context.Context, submission *models.Submission, language *models.Language, startTime time.Time) models.ExecutionResult {
 	result := models.ExecutionResult{
 		ExitCode: -1,
 	}
 
-	// Similar a Execute pero usando CompileCmd
 	filename := "main" + language.Extension
-	createFile := fmt.Sprintf("echo %q > /workspace/%s", submission.SourceCode, filename)
+	// Usar base64 para evitar problemas de escape
+	encoded := encodeBase64(submission.SourceCode)
+	createFile := fmt.Sprintf("echo '%s' | base64 -d > /workspace/%s", encoded, filename)
 	compileCmd := strings.ReplaceAll(language.CompileCmd, "{file}", filename)
+	executeCmd := strings.ReplaceAll(language.ExecuteCmd, "{file}", filename)
 
+	// Combinar compilación y ejecución en el mismo contenedor
+	// Si la compilación falla, no ejecutamos
 	fullCmd := []string{
 		"sh", "-c",
-		fmt.Sprintf("%s && cd /workspace && %s", createFile, compileCmd),
+		fmt.Sprintf("%s && cd /workspace && %s && %s", createFile, compileCmd, executeCmd),
+	}
+
+	// Configurar límites de recursos
+	resources := container.Resources{
+		Memory:   parseMemoryLimit(e.config.ExecutorMemoryLimit),
+		NanoCPUs: parseCPULimit(e.config.ExecutorCPULimit),
 	}
 
 	containerConfig := &container.Config{
-		Image:      language.DockerImage,
-		Cmd:        fullCmd,
-		WorkingDir: "/workspace",
+		Image:           language.DockerImage,
+		Cmd:             fullCmd,
+		Tty:             false,
+		AttachStdin:     true,
+		AttachStdout:    true,
+		AttachStderr:    true,
+		OpenStdin:       true,
+		StdinOnce:       true,
+		WorkingDir:      "/workspace",
+		NetworkDisabled: true,
 	}
 
 	hostConfig := &container.HostConfig{
-		AutoRemove:  false,
-		NetworkMode: "none",
+		Resources:      resources,
+		AutoRemove:     false,
+		NetworkMode:    "none",
+		ReadonlyRootfs: false,
+		CapDrop:        []string{"ALL"},
+		SecurityOpt:    []string{"no-new-privileges"},
 	}
 
 	resp, err := e.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	if err != nil {
-		result.Error = fmt.Sprintf("Failed to create compile container: %v", err)
+		result.Error = fmt.Sprintf("Failed to create container: %v", err)
 		return result
 	}
 
 	defer e.cleanup(resp.ID)
 
 	if err := e.client.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
-		result.Error = fmt.Sprintf("Failed to start compile container: %v", err)
+		result.Error = fmt.Sprintf("Failed to start container: %v", err)
 		return result
 	}
 
+	// Enviar stdin si existe
+	if submission.Stdin != "" {
+		if err := e.writeStdin(ctx, resp.ID, submission.Stdin); err != nil {
+			log.Printf("Warning: failed to write stdin: %v", err)
+		}
+	}
+
+	// Esperar a que termine
 	statusCh, errCh := e.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
@@ -364,11 +387,31 @@ func (e *Executor) compile(ctx context.Context, submission *models.Submission, l
 		}
 	case status := <-statusCh:
 		result.ExitCode = int(status.StatusCode)
+	case <-ctx.Done():
+		result.TimedOut = true
+		e.client.ContainerStop(context.Background(), resp.ID, container.StopOptions{})
 	}
 
+	// Calcular tiempo de ejecución
+	result.Time = time.Since(startTime).Seconds()
+
+	// Obtener logs
 	stdout, stderr, _ := e.getLogs(context.Background(), resp.ID)
 	result.Stdout = stdout
 	result.Stderr = stderr
+
+	// Separar output de compilación del output de ejecución
+	// Si hay error de compilación, estará en stderr
+	if result.ExitCode != 0 && strings.Contains(stderr, "error:") {
+		result.CompileOut = stderr
+		result.Stderr = ""
+	}
+
+	// Obtener estadísticas de memoria
+	stats, err := e.getStats(context.Background(), resp.ID)
+	if err == nil {
+		result.Memory = stats.MemoryUsageKB
+	}
 
 	return result
 }
@@ -410,4 +453,8 @@ func parseCPULimit(limit string) int64 {
 	var cpu float64
 	fmt.Sscanf(limit, "%f", &cpu)
 	return int64(cpu * 1e9) // Convertir a nanocpus
+}
+
+func encodeBase64(data string) string {
+	return base64.StdEncoding.EncodeToString([]byte(data))
 }
