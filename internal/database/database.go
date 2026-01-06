@@ -67,10 +67,11 @@ func (db *DB) InitSchema() error {
 		stdout TEXT,
 		stderr TEXT,
 		exit_code INTEGER DEFAULT -1,
-		time REAL DEFAULT 0,
+		time DOUBLE PRECISION DEFAULT 0,
 		memory INTEGER DEFAULT 0,
 		compile_output TEXT,
 		message TEXT,
+		webhook_url TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		finished_at TIMESTAMP,
 		CONSTRAINT fk_language FOREIGN KEY (language_id) REFERENCES languages(id)
@@ -79,6 +80,21 @@ func (db *DB) InitSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
 	CREATE INDEX IF NOT EXISTS idx_submissions_created_at ON submissions(created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_submissions_language ON submissions(language_id);
+
+	CREATE TABLE IF NOT EXISTS webhook_logs (
+		id SERIAL PRIMARY KEY,
+		submission_id VARCHAR(36) NOT NULL,
+		webhook_url TEXT NOT NULL,
+		attempt INTEGER NOT NULL DEFAULT 1,
+		status_code INTEGER,
+		response_body TEXT,
+		error TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		CONSTRAINT fk_webhook_submission FOREIGN KEY (submission_id) REFERENCES submissions(id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_webhook_logs_submission ON webhook_logs(submission_id);
+	CREATE INDEX IF NOT EXISTS idx_webhook_logs_created_at ON webhook_logs(created_at DESC);
 	`
 
 	_, err := db.conn.Exec(schema)
@@ -176,12 +192,12 @@ func (db *DB) SeedLanguages() error {
 // CreateSubmission inserta una nueva submission en la base de datos
 func (db *DB) CreateSubmission(sub *models.Submission) error {
 	query := `
-	INSERT INTO submissions (id, language_id, source_code, stdin, expected_output, status, created_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7)
+	INSERT INTO submissions (id, language_id, source_code, stdin, expected_output, status, webhook_url, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 	_, err := db.conn.Exec(query,
 		sub.ID, sub.LanguageID, sub.SourceCode, sub.Stdin,
-		sub.ExpectedOut, sub.Status, sub.CreatedAt,
+		sub.ExpectedOut, sub.Status, sub.WebhookURL, sub.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create submission: %w", err)
@@ -194,18 +210,18 @@ func (db *DB) GetSubmission(id string) (*models.Submission, error) {
 	query := `
 	SELECT id, language_id, source_code, stdin, expected_output, status,
 	       stdout, stderr, exit_code, time, memory, compile_output, message,
-	       created_at, finished_at
+	       webhook_url, created_at, finished_at
 	FROM submissions
 	WHERE id = $1
 	`
 	var sub models.Submission
 	var finishedAt sql.NullTime
-	var stdout, stderr, compileOut, message sql.NullString
+	var stdout, stderr, compileOut, message, webhookURL sql.NullString
 
 	err := db.conn.QueryRow(query, id).Scan(
 		&sub.ID, &sub.LanguageID, &sub.SourceCode, &sub.Stdin, &sub.ExpectedOut,
 		&sub.Status, &stdout, &stderr, &sub.ExitCode, &sub.Time,
-		&sub.Memory, &compileOut, &message, &sub.CreatedAt, &finishedAt,
+		&sub.Memory, &compileOut, &message, &webhookURL, &sub.CreatedAt, &finishedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -227,6 +243,9 @@ func (db *DB) GetSubmission(id string) (*models.Submission, error) {
 	}
 	if message.Valid {
 		sub.Message = message.String
+	}
+	if webhookURL.Valid {
+		sub.WebhookURL = webhookURL.String
 	}
 	if finishedAt.Valid {
 		sub.FinishedAt = &finishedAt.Time
@@ -386,4 +405,17 @@ func (db *DB) Close() error {
 // Health verifica el estado de la base de datos
 func (db *DB) Health() error {
 	return db.conn.Ping()
+}
+
+// LogWebhookAttempt registra un intento de envío de webhook
+func (db *DB) LogWebhookAttempt(submissionID, webhookURL string, attempt, statusCode int, responseBody, errorMsg string) error {
+	query := `
+	INSERT INTO webhook_logs (submission_id, webhook_url, attempt, status_code, response_body, error)
+	VALUES ($1, $2, $3, $4, $5, $6)
+	`
+	_, err := db.conn.Exec(query, submissionID, webhookURL, attempt, statusCode, responseBody, errorMsg)
+	if err != nil {
+		return fmt.Errorf("failed to log webhook attempt: %w", err)
+	}
+	return nil
 }

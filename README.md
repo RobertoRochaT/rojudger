@@ -351,14 +351,112 @@ curl -X POST http://localhost:8080/api/v1/submissions \
 {"priority": -5}
 ```
 
-### ¿Cómo Funciona?
+**📚 Más detalles:** Ver [docs/PRIORITY_SYSTEM.md](docs/PRIORITY_SYSTEM.md)
 
-1. **API** recibe submission con `priority`
-2. **Enruta** a la cola correcta (high/default/low)
-3. **Workers** revisan primero HIGH, luego DEFAULT, luego LOW
-4. **Resultado**: Tasks importantes se ejecutan primero
+---
 
-**📚 Documentación completa:** [docs/PRIORITY_SYSTEM.md](docs/PRIORITY_SYSTEM.md)
+## 🔔 Webhooks ⭐ NUEVO
+
+### ¿Qué son?
+
+Los webhooks permiten **recibir notificaciones automáticas** cuando una submission termina, sin necesidad de hacer polling.
+
+```
+┌─────────┐                  ┌──────────┐                  ┌─────────┐
+│ Cliente │ ─── POST ───────▶│ ROJUDGER │ ─── Webhook ───▶│ Tu App  │
+└─────────┘   + webhook_url  └──────────┘   (notificación) └─────────┘
+```
+
+### Ejemplo Básico
+
+```bash
+curl -X POST http://localhost:8080/api/v1/submissions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "language_id": 71,
+    "source_code": "print(\"Hello!\")",
+    "webhook_url": "https://your-app.com/webhooks/rojudger"
+  }'
+```
+
+Cuando la submission termine, ROJUDGER enviará un POST a tu URL:
+
+```json
+{
+  "event": "submission.completed",
+  "timestamp": "2024-01-15T10:30:05Z",
+  "submission": {
+    "id": "abc-123",
+    "status": "completed",
+    "stdout": "Hello!\n",
+    "exit_code": 0,
+    "time": 0.123
+  }
+}
+```
+
+### Seguridad (HMAC)
+
+Los webhooks incluyen firmas HMAC-SHA256 para verificar autenticidad:
+
+```bash
+# 1. Configurar secreto en el worker
+export WEBHOOK_SECRET="tu-secreto-super-seguro"
+./worker
+
+# 2. Verificar en tu servidor
+```
+
+**Ejemplo en Node.js:**
+
+```javascript
+const crypto = require('crypto');
+
+app.post('/webhooks/rojudger', express.raw({type: 'application/json'}), (req, res) => {
+  const signature = req.headers['x-rojudger-signature'];
+  const hmac = crypto.createHmac('sha256', process.env.WEBHOOK_SECRET);
+  hmac.update(req.body);
+  const expected = hmac.digest('hex');
+  
+  if (signature !== expected) {
+    return res.status(401).send('Invalid signature');
+  }
+  
+  // ✅ Webhook verificado
+  const payload = JSON.parse(req.body);
+  console.log('Submission completed:', payload.submission.id);
+  res.json({ status: 'received' });
+});
+```
+
+### Características
+
+- ✅ **Reintentos automáticos**: 3 intentos con backoff exponencial
+- ✅ **Firmas HMAC**: Autenticación criptográfica
+- ✅ **Logs completos**: Tabla `webhook_logs` en DB
+- ✅ **Validación de URLs**: Previene ataques SSRF
+- ✅ **Headers personalizados**: Metadatos útiles
+
+### Testing
+
+Usa el script incluido:
+
+```bash
+./scripts/test_webhooks.sh
+```
+
+O prueba con [webhook.site](https://webhook.site):
+
+```bash
+curl -X POST http://localhost:8080/api/v1/submissions \
+  -d '{
+    "language_id": 71,
+    "source_code": "print(\"Test\")",
+    "webhook_url": "https://webhook.site/tu-uuid"
+  }'
+```
+
+**📚 Documentación completa:** [docs/WEBHOOKS.md](docs/WEBHOOKS.md)
 
 ---
 

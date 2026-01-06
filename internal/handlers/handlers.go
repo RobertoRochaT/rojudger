@@ -9,6 +9,7 @@ import (
 	"github.com/RobertoRochaT/rojudger/internal/database"
 	"github.com/RobertoRochaT/rojudger/internal/executor"
 	"github.com/RobertoRochaT/rojudger/internal/models"
+	"github.com/RobertoRochaT/rojudger/internal/webhook"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -35,6 +36,14 @@ func (h *Handler) CreateSubmission(c *gin.Context) {
 		return
 	}
 
+	// Validar webhook URL si se proporciona
+	if req.WebhookURL != "" {
+		if err := webhook.ValidateWebhookURL(req.WebhookURL); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid webhook URL: " + err.Error()})
+			return
+		}
+	}
+
 	// Crear submission
 	submission := &models.Submission{
 		ID:          uuid.New().String(),
@@ -42,6 +51,7 @@ func (h *Handler) CreateSubmission(c *gin.Context) {
 		SourceCode:  req.SourceCode,
 		Stdin:       req.Stdin,
 		ExpectedOut: req.ExpectedOutput,
+		WebhookURL:  req.WebhookURL,
 		Status:      "processing",
 		ExitCode:    -1,
 		CreatedAt:   time.Now(),
@@ -49,7 +59,8 @@ func (h *Handler) CreateSubmission(c *gin.Context) {
 
 	// Guardar en base de datos
 	if err := h.db.CreateSubmission(submission); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create submission"})
+		log.Printf("ERROR creating submission: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create submission", "details": err.Error()})
 		return
 	}
 

@@ -13,6 +13,7 @@ import (
 	"github.com/RobertoRochaT/rojudger/internal/database"
 	"github.com/RobertoRochaT/rojudger/internal/executor"
 	"github.com/RobertoRochaT/rojudger/internal/queue"
+	"github.com/RobertoRochaT/rojudger/internal/webhook"
 )
 
 func main() {
@@ -42,6 +43,13 @@ func main() {
 	}
 	defer exec.Close()
 
+	// Crear webhook service
+	hmacSecret := os.Getenv("WEBHOOK_SECRET")
+	if hmacSecret == "" {
+		log.Println("⚠️  WEBHOOK_SECRET not set. Webhooks will be sent without HMAC signatures.")
+	}
+	webhookService := webhook.NewWebhookService(30*time.Second, 3, hmacSecret)
+
 	// Número de workers concurrentes
 	numWorkers := cfg.ExecutorMaxConcurrent
 	if numWorkers == 0 {
@@ -66,7 +74,7 @@ func main() {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			runWorker(ctx, workerID, db, q, exec)
+			runWorker(ctx, workerID, db, q, exec, webhookService)
 		}(i + 1)
 	}
 
@@ -85,7 +93,7 @@ func main() {
 	log.Println("✅ All workers stopped. Goodbye!")
 }
 
-func runWorker(ctx context.Context, workerID int, db *database.DB, q *queue.Queue, exec *executor.Executor) {
+func runWorker(ctx context.Context, workerID int, db *database.DB, q *queue.Queue, exec *executor.Executor, webhookService *webhook.WebhookService) {
 	log.Printf("Worker #%d started", workerID)
 
 	for {
@@ -109,8 +117,8 @@ func runWorker(ctx context.Context, workerID int, db *database.DB, q *queue.Queu
 
 			// Procesar el trabajo
 			log.Printf("Worker #%d: Processing job %s", workerID, job.SubmissionID)
-			
-			if err := processSubmission(ctx, workerID, job.SubmissionID, db, exec, q); err != nil {
+
+			if err := processSubmission(ctx, workerID, job.SubmissionID, db, exec, q, webhookService); err != nil {
 				log.Printf("Worker #%d: Error processing job %s: %v", workerID, job.SubmissionID, err)
 				q.MarkFailed(ctx, job.SubmissionID, false)
 			} else {
@@ -121,7 +129,7 @@ func runWorker(ctx context.Context, workerID int, db *database.DB, q *queue.Queu
 	}
 }
 
-func processSubmission(ctx context.Context, workerID int, submissionID string, db *database.DB, exec *executor.Executor, q *queue.Queue) error {
+func processSubmission(ctx context.Context, workerID int, submissionID string, db *database.DB, exec *executor.Executor, q *queue.Queue, webhookService *webhook.WebhookService) error {
 	// 1. Obtener submission de la base de datos
 	submission, err := db.GetSubmission(submissionID)
 	if err != nil {
@@ -141,9 +149,9 @@ func processSubmission(ctx context.Context, workerID int, submissionID string, d
 	}
 
 	// 4. Ejecutar el código
-	log.Printf("Worker #%d: Executing code for submission %s (language: %s)", 
+	log.Printf("Worker #%d: Executing code for submission %s (language: %s)",
 		workerID, submissionID, language.DisplayName)
-	
+
 	result := exec.Execute(ctx, submission, language)
 
 	// 5. Actualizar submission con los resultados
@@ -169,6 +177,20 @@ func processSubmission(ctx context.Context, workerID int, submissionID string, d
 	// 6. Guardar en base de datos
 	if err := db.UpdateSubmission(submission); err != nil {
 		return err
+	}
+
+	// 7. Enviar webhook si está configurado
+	if submission.WebhookURL != "" {
+		log.Printf("Worker #%d: Sending webhook for submission %s to %s",
+			workerID, submissionID, submission.WebhookURL)
+
+		// Enviar de forma asíncrona con logging
+		webhookService.SendAsync(submission.WebhookURL, submission, func(submissionID, webhookURL string, attempt, statusCode int, responseBody, errorMsg string) {
+			// Log en base de datos
+			if err := db.LogWebhookAttempt(submissionID, webhookURL, attempt, statusCode, responseBody, errorMsg); err != nil {
+				log.Printf("Worker #%d: Failed to log webhook attempt: %v", workerID, err)
+			}
+		})
 	}
 
 	return nil

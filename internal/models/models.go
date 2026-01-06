@@ -21,6 +21,7 @@ type Submission struct {
 	Message     string     `json:"message,omitempty" db:"message"`
 	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
 	FinishedAt  *time.Time `json:"finished_at,omitempty" db:"finished_at"`
+	WebhookURL  string     `json:"webhook_url,omitempty"`
 }
 
 // SubmissionRequest es lo que recibe la API
@@ -29,6 +30,8 @@ type SubmissionRequest struct {
 	SourceCode  string `json:"source_code" binding:"required"`
 	Stdin       string `json:"stdin"`
 	ExpectedOut string `json:"expected_output"`
+	WebhookURL  string `json:"webhook_url,omitempty"`
+	Priority    int    `json:"priority,omitempty"`
 }
 
 // SubmissionResponse es lo que devuelve la API
@@ -92,6 +95,7 @@ func NewSubmission(req SubmissionRequest, id string) *Submission {
 		SourceCode:  req.SourceCode,
 		Stdin:       req.Stdin,
 		ExpectedOut: req.ExpectedOut,
+		WebhookURL:  req.WebhookURL,
 		Status:      StatusQueued,
 		CreatedAt:   time.Now(),
 		ExitCode:    -1,

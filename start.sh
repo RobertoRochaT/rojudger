@@ -195,23 +195,23 @@ done
 echo ""
 
 # Iniciar IDE Frontend
-echo -e "${BLUE}🎨 Iniciando ROJUDGER IDE Frontend...${NC}"
+#echo -e "${BLUE}🎨 Iniciando ROJUDGER IDE Frontend...${NC}"
 
-cd compilador
-python3 -m http.server 3000 --directory public > /tmp/rojudger-ide.log 2>&1 &
-IDE_PID=$!
+#cd compilador
+#python3 -m http.server 3000 --directory public > /tmp/rojudger-ide.log 2>&1 &
+#IDE_PID=$!
 
-echo -e "${YELLOW}⏳ Esperando a que el IDE esté listo...${NC}"
-sleep 2
+#echo -e "${YELLOW}⏳ Esperando a que el IDE esté listo...${NC}"
+#sleep 2
 
 # Verificar que el IDE está corriendo
-if ! kill -0 $IDE_PID 2>/dev/null; then
-    echo -e "${RED}❌ Error al iniciar el IDE${NC}"
-    exit 1
-fi
+#if ! kill -0 $IDE_PID 2>/dev/null; then
+#    echo -e "${RED}❌ Error al iniciar el IDE${NC}"
+#    exit 1
+#fi
 
-echo -e "${GREEN}✅ IDE Frontend corriendo en http://localhost:3000${NC}"
-echo ""
+#echo -e "${GREEN}✅ IDE Frontend corriendo en http://localhost:3000${NC}"
+#echo ""
 
 # Resumen
 echo -e "${GREEN}╔════════════════════════════════════════════════╗${NC}"

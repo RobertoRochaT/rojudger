@@ -7,4 +7,5 @@ type CreateSubmissionRequest struct {
 	Stdin          string `json:"stdin"`
 	ExpectedOutput string `json:"expected_output"`
 	Priority       int    `json:"priority"`
+	WebhookURL     string `json:"webhook_url,omitempty"`
 }
